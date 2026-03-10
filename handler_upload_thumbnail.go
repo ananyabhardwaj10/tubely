@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"io"
+	"os"
+	"path/filepath"
+	"mime"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -44,13 +47,14 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	defer file.Close()
 
-	media_type := header.Header.Get("Content-Type")
-
-	var data []byte
-
-	data, err = io.ReadAll(file)   
+	media_type, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "unable to read data from the file", err)
+		respondWithError(w, http.StatusInternalServerError, "unable to get media-type", err)
+		return 
+	}
+
+	if media_type != "image/jpeg" && media_type != "image/png" {
+		respondWithError(w, http.StatusBadRequest, "cannot upload a non-image file as thumbnail", err)
 		return 
 	}
 
@@ -64,20 +68,41 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 			respondWithError(w, http.StatusUnauthorized, "Unauthorized access", err)
 			return 
 		}
+	
 
-	videoThumbnails[videoID] = thumbnail{
-		data: data,
-		mediaType: media_type,
+
+	extensions, err := mime.ExtensionsByType(media_type) 
+
+	if err != nil || len(extensions) == 0 {
+		respondWithError(w, http.StatusInternalServerError, "unable to get file extension", err)
+		return 
 	}
 
-	thumbnailURL := fmt.Sprintf("http://localhost%v/api/thumbnails/%v", cfg.port, videoID)
+	extension := extensions[0]
+	file_name := videoIDString + extension
+
+	final_path := filepath.Join(cfg.assetsRoot, file_name)
+
+	final_file, err := os.Create(final_path)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "cannot create/modify file at the given path", err)
+		return 
+	}
+
+	_, err = io.Copy(final_file, file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "unable to copy file from source to destination", err)
+		return 
+	}
+
+
+	thumbnailURL := fmt.Sprintf("http://localhost%s/assets/%s", cfg.port, file_name)
 
 	video.ThumbnailURL = &thumbnailURL
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "unable to update the video", err)
-		delete(videoThumbnails, videoID)
 		return 
 	}
 
