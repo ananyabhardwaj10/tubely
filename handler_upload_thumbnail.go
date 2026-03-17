@@ -5,10 +5,7 @@ import (
 	"net/http"
 	"io"
 	"os"
-	"path/filepath"
 	"mime"
-	"encoding/base64"
-	"crypto/rand"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -51,12 +48,12 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	media_type, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "unable to get media-type", err)
+		respondWithError(w, http.StatusBadRequest, "unable to get media-type", err)
 		return 
 	}
 
 	if media_type != "image/jpeg" && media_type != "image/png" {
-		respondWithError(w, http.StatusBadRequest, "cannot upload a non-image file as thumbnail", err)
+		respondWithError(w, http.StatusBadRequest, "cannot upload a non-image file as thumbnail", nil)
 		return 
 	}
 
@@ -67,42 +64,28 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	if video.UserID != userID {
-			respondWithError(w, http.StatusUnauthorized, "Unauthorized access", err)
-			return 
-		}
+		respondWithError(w, http.StatusUnauthorized, "Unauthorized access", nil)
+		return 
+	}
 	
+	assetPath := getAssetPath(media_type)
+	assetDiskPath := cfg.getAssetDiskPath(assetPath)
 
-
-	extensions, err := mime.ExtensionsByType(media_type) 
-
-	if err != nil || len(extensions) == 0 {
-		respondWithError(w, http.StatusInternalServerError, "unable to get file extension", err)
-		return 
-	}
-
-	extension := extensions[0]
-	key := make([]byte, 32)
-	rand.Read(key)
-
-	raw_URL := base64.RawURLEncoding.EncodeToString(key)
-	file_name := raw_URL + extension
-
-	final_path := filepath.Join(cfg.assetsRoot, file_name)
-
-	final_file, err := os.Create(final_path)
+	dst, err := os.Create(assetDiskPath)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "cannot create/modify file at the given path", err)
-		return 
+		respondWithError(w, http.StatusInternalServerError, "Unable to create file on server", err)
+		return
 	}
 
-	_, err = io.Copy(final_file, file)
+	defer dst.Close()
+
+	_, err = io.Copy(dst, file)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "unable to copy file from source to destination", err)
 		return 
 	}
 
-
-	thumbnailURL := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, file_name)
+	thumbnailURL := cfg.getAssetURL(assetPath)
 
 	video.ThumbnailURL = &thumbnailURL
 
