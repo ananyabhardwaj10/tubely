@@ -5,6 +5,10 @@ import (
 	"mime"
 	"os"
 	"io"
+	"encoding/json"
+	"os/exec"
+	"bytes"
+	"math"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -84,11 +88,29 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	aspectRatio, err := getVideoAspectRatio(file_ptr.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error getting the aspect ratio", err)
+		return 
+	}
+
 	key := getAssetPath(media_type)
+
+	var final_key, prefix string 
+
+	if aspectRatio == "16:9" {
+		prefix = "landscape"
+	} else if aspectRatio == "9:16" {
+		prefix = "portrait"
+	} else {
+		prefix = "other"
+	}
+
+	final_key = prefix + "/" +  key
 
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket: aws.String(cfg.s3Bucket), 
-		Key: aws.String(key),
+		Key: aws.String(final_key),
 		Body: file_ptr,
 		ContentType: aws.String(media_type),
 	}) 
@@ -98,7 +120,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return 
 	}
 
-	url := cfg.getObjectURL(key)
+	url := cfg.getObjectURL(final_key)
 
 	video.VideoURL = &url 
 
@@ -109,5 +131,40 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
+
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	var buffer bytes.Buffer 
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	cmd.Stdout = &buffer
+	err := cmd.Run()
+	if err != nil {
+		return "", err  
+	}
+
+	var result struct {
+		Streams []struct {
+			Width int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	err = json.Unmarshal(buffer.Bytes(), &result)
+	if err != nil {
+		return "", err
+	}
+
+	ratio := float64(result.Streams[0].Width) / float64(result.Streams[0].Height)
+
+	if math.Abs(ratio - 16.0/9.0) < 0.01 {
+    	return "16:9", nil
+	}
+
+	if math.Abs(ratio - 9.0/16.0) < 0.01 {
+    	return "9:16", nil
+	}	
+
+	return "other", nil
 
 }
