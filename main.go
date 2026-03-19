@@ -87,6 +87,7 @@ func main() {
 
 	s3Client := s3.NewFromConfig(conFig)
 
+
 	cfg := apiConfig{
 		db:               db,
 		jwtSecret:        jwtSecret,
